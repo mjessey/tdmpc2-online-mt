@@ -1,3 +1,5 @@
+import wandb
+
 import os
 os.environ['MUJOCO_GL'] = os.getenv("MUJOCO_GL", 'egl')
 os.environ['LAZY_LEGACY_OP'] = '0'
@@ -17,6 +19,7 @@ from envs import make_env
 from tdmpc2 import TDMPC2
 from trainer.offline_trainer import OfflineTrainer
 from trainer.online_trainer import OnlineTrainer
+from trainer.online_trainer_multitask import OnlineTrainerMultitask
 from common.logger import Logger
 
 torch.backends.cudnn.benchmark = True
@@ -49,7 +52,8 @@ def train(cfg: dict):
 	set_seed(cfg.seed)
 	print(colored('Work dir:', 'yellow', attrs=['bold']), cfg.work_dir)
 
-	trainer_cls = OfflineTrainer if cfg.multitask else OnlineTrainer
+	#trainer_cls = OfflineTrainer if cfg.multitask else OnlineTrainer
+	trainer_cls = OnlineTrainerMultitask
 	trainer = trainer_cls(
 		cfg=cfg,
 		env=make_env(cfg),
