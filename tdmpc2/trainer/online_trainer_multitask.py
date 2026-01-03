@@ -17,6 +17,7 @@ class OnlineTrainerMultitask(Trainer):
 		self._task_step = [0] * len(self.cfg.tasks)
 		self._ep_idx = 0
 		self._task_idx = 0
+		self._task_avg_reward = [0.0] * len(self.cfg.tasks)
 		self._start_time = time()
 
 	def common_metrics(self):
@@ -52,7 +53,10 @@ class OnlineTrainerMultitask(Trainer):
 					self.logger.video.save(self._step, key=f"videos/{self.cfg.tasks[task_idx]}_eval_video")
 			results.update({
 				f'episode_reward+{self.cfg.tasks[task_idx]}': np.nanmean(ep_rewards),
-				f'episode_success+{self.cfg.tasks[task_idx]}': np.nanmean(ep_successes),})
+				#f'episode_success+{self.cfg.tasks[task_idx]}': np.nanmean(ep_successes),
+				})
+
+		self.logger.save_checkpoint(self.agent, self.buffer, self._step)
 		return results
 
 	def to_td(self, obs, action=None, reward=None, terminated=None):
@@ -106,9 +110,9 @@ class OnlineTrainerMultitask(Trainer):
 		self.pretrain()
 
 		is_first_iter = True
-		avail_tasks = [i for i in range(len(self.cfg.tasks))]
 		train_metrics, done, eval_next = {}, True, True
-		
+		#avail_tasks = [i for i in range(len(self.cfg.tasks))]
+
 		while self._step <= self.cfg.steps:
 			# Evaluate agent periodically
 			if self._step % self.cfg.eval_freq == 0:
@@ -126,8 +130,9 @@ class OnlineTrainerMultitask(Trainer):
 					if info['terminated'] and not self.cfg.episodic:
 						raise ValueError('Termination detected but you are not in episodic mode. ' \
 						'Set `episodic=true` to enable support for terminations.')
+					episode_reward = torch.tensor([td['reward'] for td in self._tds[1:]]).sum()
 					train_metrics.update(
-						episode_reward=torch.tensor([td['reward'] for td in self._tds[1:]]).sum(),
+						episode_reward=episode_reward,
 						episode_success=info['success'],
 						episode_length=len(self._tds),
 						episode_terminated=info['terminated'])
@@ -135,8 +140,21 @@ class OnlineTrainerMultitask(Trainer):
 					self.logger.log(train_metrics, 'train')
 					self._ep_idx = self.buffer.add(torch.cat(self._tds))
 
-				task_weights = [(self._step - self._task_step[i]) /  self._step for i in range(len(self.cfg.tasks))]
-				self._task_idx = random.choices(avail_tasks, weights=task_weights)[0]
+					# Update moving average of task reward
+					self._task_avg_reward[self._task_idx] *= 0.9
+					self._task_avg_reward[self._task_idx] += 0.1 * episode_reward
+
+					#task_weights = [1000.0 - self._task_avg_reward[i] for i in avail_tasks]
+					#self._task_idx = random.choices(avail_tasks, weights=task_weights)[0]
+
+				if random.random() < 0.5:
+					# Set the next task to the one with the lowest average reward
+					self._task_idx = self._task_avg_reward.index(min(self._task_avg_reward))
+				else:
+					# Set the next task to the one where the fewest experience was collected
+					#self._task_idx = self._task_step.index(min(self._task_step))
+					# Set the next task to a random one
+					self._task_idx = random.randint(0, len(self.cfg.tasks) - 1)
 
 				obs = self.env.reset(self._task_idx)
 				self._tds = [self.to_td(obs)]
@@ -154,5 +172,9 @@ class OnlineTrainerMultitask(Trainer):
 			self._step += 1
 			self._task_step[self._task_idx] += 1
 			is_first_iter = False
+
+		eval_metrics = self.eval()
+		eval_metrics.update(self.common_metrics())
+		self.logger.log(eval_metrics, 'eval')
 
 		self.logger.finish(self.agent)

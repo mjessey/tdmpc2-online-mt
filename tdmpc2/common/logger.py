@@ -2,6 +2,7 @@ import dataclasses
 import os
 import datetime
 import re
+import torch
 
 import numpy as np
 import pandas as pd
@@ -239,3 +240,28 @@ class Logger:
 				self._log_dir / "eval.csv", header=keys, index=None
 			)
 		self._print(d, category)
+
+	def save_checkpoint(self, agent, buffer, step):
+		ckpt = {
+			"step": step,
+			"model": agent.model.state_dict(),
+			"optim": agent.optim.state_dict(),
+			"pi_optim": agent.pi_optim.state_dict(),
+			"buffer": buffer.as_tensordict(),
+			"num_eps": buffer.num_eps,
+		}
+
+		path = self._log_dir / f"checkpoint_{step}.pt"
+		torch.save(ckpt, path)
+		print(f"Saved checkpoint: {path}")
+
+	def load_checkpoint(path, agent, buffer):
+		ckpt = torch.load(path, map_location="cpu")
+
+		agent.model.load_state_dict(ckpt["model"])
+		agent.optim.load_state_dict(ckpt["optim"])
+		agent.pi_optim.load_state_dict(ckpt["pi_optim"])
+
+		buffer.load_from_tensordict(ckpt["buffer"])
+
+		return ckpt["step"]
