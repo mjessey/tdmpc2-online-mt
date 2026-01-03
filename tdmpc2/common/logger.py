@@ -254,14 +254,3 @@ class Logger:
 		path = self._log_dir / f"checkpoint_{step}.pt"
 		torch.save(ckpt, path)
 		print(f"Saved checkpoint: {path}")
-
-	def load_checkpoint(path, agent, buffer):
-		ckpt = torch.load(path, map_location="cpu")
-
-		agent.model.load_state_dict(ckpt["model"])
-		agent.optim.load_state_dict(ckpt["optim"])
-		agent.pi_optim.load_state_dict(ckpt["pi_optim"])
-
-		buffer.load_from_tensordict(ckpt["buffer"])
-
-		return ckpt["step"]
