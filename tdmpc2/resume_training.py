@@ -103,7 +103,7 @@ def main():
 	trainer._step = start_step
 
 	print(f"[Resume] Resuming training at step {start_step}...")
-	trainer.train()
+	trainer.train(pretrain=False)
 
 
 if __name__ == "__main__":

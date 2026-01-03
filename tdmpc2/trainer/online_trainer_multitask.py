@@ -105,9 +105,10 @@ class OnlineTrainerMultitask(Trainer):
 			self.agent.update(self.buffer)
 		print("Finished pretraining")
 
-	def train(self):
+	def train(self, pretrain=True):
 		"""Train a TD-MPC2 agent."""
-		self.pretrain()
+		if pretrain:
+			self.pretrain()
 
 		is_first_iter = True
 		train_metrics, done, eval_next = {}, True, True
