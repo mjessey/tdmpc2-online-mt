@@ -1,17 +1,18 @@
 import argparse
 import hydra
 from hydra import compose, initialize
-from hydra.core.hydra_config import HydraConfig
 from omegaconf import OmegaConf
+from pathlib import Path
 import torch
 
+from common.parser import parse_cfg
 from common.seed import set_seed
 from common.buffer import Buffer
 from common.logger import Logger
 from envs import make_env
 from tdmpc2 import TDMPC2
-from trainer.online_trainer_multitask import OnlineTrainerMultitask
 from trainer.online_trainer import OnlineTrainer
+from trainer.online_trainer_multitask import OnlineTrainerMultitask
 
 
 def load_checkpoint(path, agent, buffer):
@@ -29,18 +30,22 @@ def main():
 	parser.add_argument("--checkpoint", required=True)
 	args = parser.parse_args()
 
-	run_dir = args.run_dir
+	run_dir = Path(args.run_dir)
+	overrides_path = run_dir / ".hydra" / "overrides.yaml"
 
-	# Load overrides.yaml
-	overrides = OmegaConf.load(f"{run_dir}/.hydra/overrides.yaml")
+	# Load the overrides Hydra saved during training
+	overrides = OmegaConf.load(overrides_path)
 
-	# Initialize Hydra in the original working directory
+	# Initialize Hydra with original config directory
 	with initialize(version_base=None, config_path="."):
+		# Compose a fresh, resolved config using saved overrides
 		cfg = compose(config_name="config", overrides=overrides)
 
-	# Now cfg is fully resolved (no ???)
-	set_seed(cfg.seed)
+	# Now cfg has real values (no ???)
+	cfg = parse_cfg(cfg)
 
+	# Recreate full training state
+	set_seed(cfg.seed)
 	env = make_env(cfg)
 	agent = TDMPC2(cfg)
 	buffer = Buffer(cfg)
