@@ -16,9 +16,6 @@ from trainer.online_trainer_multitask import OnlineTrainerMultitask
 from trainer.offline_trainer import OfflineTrainer
 
 
-# -----------------------------------------------------------------------------
-# Checkpoint loading
-# -----------------------------------------------------------------------------
 def load_checkpoint(path, agent, buffer):
 	print(f"[Resume] Loading checkpoint from: {path}")
 	ckpt = torch.load(path, map_location="cpu")
@@ -30,22 +27,22 @@ def load_checkpoint(path, agent, buffer):
 
 	print(f"[Resume] Restored {ckpt['num_eps']} episodes")
 	print(f"[Resume] Restored step to {ckpt['step']}")
-
 	return ckpt["step"]
 
 
-# -----------------------------------------------------------------------------
-# Hydra entry point
-# -----------------------------------------------------------------------------
-@hydra.main(version_base=None, config_path=".", config_name="config")
+@hydra.main(config_path=".", config_name="config", version_base=None)
 def main(dummy_cfg):
+	# Use custom argument names to avoid Hydra conflicts
 	parser = argparse.ArgumentParser()
-	parser.add_argument("--cfg", required=True)
-	parser.add_argument("--checkpoint", required=True)
-	args = parser.parse_args()
+	parser.add_argument("--resume-cfg", required=True)
+	parser.add_argument("--resume-checkpoint", required=True)
+	args, unknown = parser.parse_known_args()
 
-	# Load saved Hydra config (original training config)
-	saved_cfg = OmegaConf.load(args.cfg)
+	cfg_path = Path(args.resume_cfg)
+	ckpt_path = Path(args.resume_checkpoint)
+
+	print(f"[Resume] Loading Hydra config: {cfg_path}")
+	saved_cfg = OmegaConf.load(cfg_path)
 	cfg = parse_cfg(saved_cfg)
 
 	set_seed(cfg.seed)
@@ -63,12 +60,9 @@ def main(dummy_cfg):
 	logger = Logger(cfg)
 
 	trainer_cls = OnlineTrainerMultitask if cfg.multitask else OnlineTrainer
-
-	print("[Resume] Creating trainer...")
 	trainer = trainer_cls(cfg=cfg, env=env, agent=agent, buffer=buffer, logger=logger)
 
-	# Load checkpoint
-	start_step = load_checkpoint(args.checkpoint, agent, buffer)
+	start_step = load_checkpoint(ckpt_path, agent, buffer)
 	trainer._step = start_step
 
 	print(f"[Resume] Resuming training at step {start_step}...")
