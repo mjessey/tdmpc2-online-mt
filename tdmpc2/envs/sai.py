@@ -27,7 +27,9 @@ class SAIWrapper(gym.Wrapper):
         return self.env.reset()[0]
 
     def step(self, action):
-        obs, reward, terminated, truncated, info = self.env.step(action.copy())
+        obs, reward, terminated, truncated, info = self.env.step(
+            self.action_function(action)
+        )
 
         done = terminated or truncated
         info["terminated"] = terminated
@@ -42,6 +44,16 @@ class SAIWrapper(gym.Wrapper):
 
     def render(self, **kwargs):
         return self.env.render(**kwargs)
+
+    def action_function(self, action):
+        action = action.clamp(-1, 1)
+
+        mi = self.env.action_space.low
+        ma = self.env.action_space.high
+
+        normalized = (action + 1) / (2) * (ma - mi) + mi
+
+        return normalized
 
 
 def make_env(cfg):
