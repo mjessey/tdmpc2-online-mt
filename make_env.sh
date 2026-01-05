@@ -63,7 +63,7 @@ pip install torchrl==0.6.0 tensordict==0.6.0 \
 # ---------------------------------------------------------
 echo ""
 echo ">>> Installing latest MuJoCo (compatible with sai-rl)"
-pip install mujoco --upgrade --cache-dir "$PIP_CACHE_DIR"
+pip install mujoco==3.1.6 --cache-dir "$PIP_CACHE_DIR"
 
 # dm-control 1.0.16 supports MuJoCo 3.x
 echo ">>> Installing dm-control"
