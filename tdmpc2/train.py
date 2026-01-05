@@ -22,6 +22,9 @@ from trainer.online_trainer import OnlineTrainer
 from trainer.online_trainer_multitask import OnlineTrainerMultitask
 from common.logger import Logger
 
+from pathlib import Path
+from omegaconf import OmegaConf
+
 torch.backends.cudnn.benchmark = True
 torch.set_float32_matmul_precision('high')
 
@@ -49,6 +52,11 @@ def train(cfg: dict):
 	assert torch.cuda.is_available()
 	assert cfg.steps > 0, 'Must train for at least 1 step.'
 	cfg = parse_cfg(cfg)
+
+	resolved_cfg_path = Path(cfg.work_dir) / "resolved_config.yaml"
+	resolved_cfg_path.parent.mkdir(parents=True, exist_ok=True)
+	OmegaConf.save(cfg, resolved_cfg_path)
+
 	set_seed(cfg.seed)
 	print(colored('Work dir:', 'yellow', attrs=['bold']), cfg.work_dir)
 

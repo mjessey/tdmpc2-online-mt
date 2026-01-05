@@ -1,9 +1,8 @@
 import argparse
-import torch
 from pathlib import Path
+import torch
+from omegaconf import OmegaConf
 
-# TD-MPC2 imports (adjust paths if needed)
-from common.parser import parse_cfg
 from common.seed import set_seed
 from common.buffer import Buffer
 from common.logger import Logger
@@ -11,20 +10,14 @@ from envs import make_env
 from tdmpc2 import TDMPC2
 from trainer.online_trainer import OnlineTrainer
 from trainer.online_trainer_multitask import OnlineTrainerMultitask
-from trainer.offline_trainer import OfflineTrainer
 
 
-# -----------------------------------------------------------------------------
-# Load checkpoint
-# -----------------------------------------------------------------------------
 def load_checkpoint(path, agent, buffer):
 	print(f"[Resume] Loading checkpoint from: {path}")
 	ckpt = torch.load(path, map_location="cpu")
 
-	# Restore model
+	# Restore model + optimizers
 	agent.model.load_state_dict(ckpt["model"])
-
-	# Restore optimizers
 	agent.optim.load_state_dict(ckpt["optim"])
 	agent.pi_optim.load_state_dict(ckpt["pi_optim"])
 
@@ -32,43 +25,35 @@ def load_checkpoint(path, agent, buffer):
 	buffer.load_from_tensordict(ckpt["buffer"])
 
 	print(f"[Resume] Restored {ckpt['num_eps']} episodes")
-	print(f"[Resume] Restored step to {ckpt['step']}")
-
+	print(f"[Resume] Will resume from step {ckpt['step']}")
 	return ckpt["step"]
 
 
-# -----------------------------------------------------------------------------
-# MAIN RESUME LOGIC
-# -----------------------------------------------------------------------------
 def main():
 	parser = argparse.ArgumentParser(description="Resume TD-MPC2 training")
-	parser.add_argument("--cfg", type=str, required=True,
-						help="Path to the Hydra-generated config file used for training")
-	parser.add_argument("--checkpoint", type=str, required=True,
+	parser.add_argument("--run-dir", required=True,
+						help="Original Hydra run directory (e.g., outputs/<job>_<seed>)")
+	parser.add_argument("--checkpoint", required=True,
 						help="Path to checkpoint_XXXXXX.pt")
 	args = parser.parse_args()
 
-	cfg_path = Path(args.cfg)
-	ckpt_path = Path(args.checkpoint)
+	run_dir = Path(args.run_dir)
+	cfg_path = run_dir / "resolved_config.yaml"
 
 	if not cfg_path.exists():
-		raise FileNotFoundError(f"Config not found: {cfg_path}")
-	if not ckpt_path.exists():
-		raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
+		raise FileNotFoundError(
+			f"Resolved config not found: {cfg_path}\n"
+			"Make sure you saved it during training via OmegaConf.save."
+		)
 
-	print(f"[Resume] Loading Hydra config: {cfg_path}")
+	if not Path(args.checkpoint).exists():
+		raise FileNotFoundError(f"Checkpoint not found: {args.checkpoint}")
 
-	# Hydra configs are YAML, but they need parse_cfg()
-	import yaml
-	with open(cfg_path, "r") as f:
-		raw_cfg = yaml.safe_load(f)
+	print(f"[Resume] Loading resolved config: {cfg_path}")
+	cfg = OmegaConf.load(cfg_path)
 
-	cfg = parse_cfg(raw_cfg)
-
-	# Must set seed here to ensure determinism
 	set_seed(cfg.seed)
 
-	# --- Recreate all components exactly like train.py ---
 	print("[Resume] Creating environment...")
 	env = make_env(cfg)
 
@@ -81,25 +66,12 @@ def main():
 	print("[Resume] Creating logger...")
 	logger = Logger(cfg)
 
-	# Pick correct trainer class
-	if cfg.multitask:
-		trainer_cls = OnlineTrainerMultitask
-	else:
-		trainer_cls = OnlineTrainer
+	trainer_cls = OnlineTrainerMultitask if cfg.multitask else OnlineTrainer
 
 	print("[Resume] Creating trainer...")
-	trainer = trainer_cls(
-		cfg=cfg,
-		env=env,
-		agent=agent,
-		buffer=buffer,
-		logger=logger,
-	)
+	trainer = trainer_cls(cfg=cfg, env=env, agent=agent, buffer=buffer, logger=logger)
 
-	# --- Load checkpoint ---
-	start_step = load_checkpoint(ckpt_path, agent, buffer)
-
-	# --- Set step count in trainer ---
+	start_step = load_checkpoint(args.checkpoint, agent, buffer)
 	trainer._step = start_step
 
 	print(f"[Resume] Resuming training at step {start_step}...")
