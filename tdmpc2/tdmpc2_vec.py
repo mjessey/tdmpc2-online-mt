@@ -107,44 +107,47 @@ class TDMPC2(torch.nn.Module):
 
 	@torch.no_grad()
 	def forward(self, x):
-		"""
-		Called by the VectorEnv.
-		Args
-		----
-		x : np.ndarray		  shape (B, D)
-			 Last 3 columns are one-hot task indicators.
-			 Remaining columns constitute the state vector.
-			 D-3 can differ across tasks but must be <= 54.
+		if x[0, -3]:
+			task_idx = 0
+		elif x[0, -2]:
+			task_idx = 1
+		else:
+			task_idx = 2
 
-		Returns
-		-------
-		torch.Tensor   (B, action_dim) – actions in [-1,1]
-		"""
-		task_idx = torch.as_tensor(np.argmax(x[:, -3:], axis=1),
-							   device=self.device, dtype=torch.long)  # (B,)
+		x = x[:, :-3]
+		x = np.hstack((x, np.zeros((100, 54 - x.shape[1]))))
+		x = torch.tensor(x, dtype=torch.float32)
+		return self.act(x,
+				t0=torch.ones(100, dtype=torch.bool, device=self.device),
+				eval_mode=True,
+				task=torch.tensor(task_idx, device=self.device))
+    
+	@torch.no_grad()
+	def _forward(self, x):
+		if isinstance(x, np.ndarray):
+			task_idx = torch.from_numpy(x[:, -3:].argmax(1)).to(self.device, torch.long)
+			state = x[:, :-3]
+		elif isinstance(x, torch.Tensor):
+			task_idx = x[:, -3:].argmax(1).to(torch.long)
+			state = x[:, :-3].cpu().numpy()
+		else:
+			raise TypeError
 
-		state = x[:, :-3]											  # (B, D-3)
 		B, F = state.shape
-		pad = 54 - F
-		if pad < 0:
-			raise ValueError(f"state has {F} features (>54)")
-		if pad:
-			state = np.hstack((state, np.zeros((B, pad), dtype=state.dtype)))
-		obs = torch.as_tensor(state, dtype=torch.float32, device=self.device)  # (B,54)
+		if F > 54:
+			raise ValueError
+		if F < 54:
+			state = np.hstack((state, np.zeros((B, 54 - F), dtype=state.dtype)))
 
-		if not hasattr(self, "_t0_mask"):							   # create on first call
+		obs = torch.as_tensor(state, dtype=torch.float32, device=self.device)
+
+		if not hasattr(self, "_t0_mask"):
 			self._t0_mask = torch.ones(B, dtype=torch.bool, device=self.device)
-		elif self._t0_mask.shape[0] != B:							   # safety check
-			raise RuntimeError(f"agent was initialised for {self._t0_mask.shape[0]} "
-							   f"envs but got batch size {B}")
+		elif self._t0_mask.shape[0] != B:
+			raise RuntimeError
 
-		action = self.act(obs,
-						  t0=self._t0_mask,		   # (B,) bool
-						  eval_mode=True,
-						  task=task_idx)		   # (B,)
-
-		# After the first step all envs are no longer at t0
-		self._t0_mask[:] = False
+		action = self.act(obs, t0=self._t0_mask, eval_mode=True, task=task_idx.to(self.device))
+		#self._t0_mask[:] = False
 		return action
 
 	@torch.no_grad()
@@ -162,7 +165,7 @@ class TDMPC2(torch.nn.Module):
 			torch.Tensor: Action to take in the environment.
 		"""
 		obs = obs.to(self.device, non_blocking=True)
-		if task is not None and task.ndim == 0:
+		if task is not None:
 			#task = torch.tensor([task], device=self.device)
 			task = task.repeat(obs.shape[0]).to(self.device)
 		if self.cfg.mpc:
@@ -215,6 +218,7 @@ class TDMPC2(torch.nn.Module):
 				_z = self.model.next(_z, a, task)
 			a, _ = self.model.pi(_z, task)
 			pi_actions[-1] = a.view(self._num_envs, self.cfg.num_pi_trajs, self.cfg.action_dim)
+			pi_actions = pi_actions.permute(1,0,2,3).contiguous()
 		else:
 			pi_actions = None
 
@@ -249,12 +253,16 @@ class TDMPC2(torch.nn.Module):
 				self._num_envs * self.cfg.num_samples,
 				self.cfg.action_dim
 			)
+			task_rep = None
+			if task is not None:
+			    task_rep = task.unsqueeze(1).repeat(1, self.cfg.num_samples).view(-1)
 			value = self._estimate_value(_z, actions_flat, task).view(self._num_envs, self.cfg.num_samples, 1)
 			#elite_idxs = torch.topk(value.squeeze(1), self.cfg.num_elites, dim=0).indices
 			elite_idx = value.squeeze(-1).topk(self.cfg.num_elites, 1).indices
 			#elite_value, elite_actions = value[elite_idxs], actions[:, elite_idxs]
+			actions_perm = actions.permute(0,2,1,3).contiguous()
 			elite_actions = torch.gather(
-				actions.transpose(0, 1).view(self._num_envs, self.cfg.num_samples, self.cfg.horizon, self.cfg.action_dim),
+				actions_perm,
 				1,
 				elite_idx[:, :, None, None].expand(-1, -1, self.cfg.horizon, self.cfg.action_dim)
 			)
