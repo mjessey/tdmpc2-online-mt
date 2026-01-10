@@ -120,7 +120,7 @@ class TDMPC2(torch.nn.Module):
 		return self.act(x,
 				t0=torch.ones(100, dtype=torch.bool, device=self.device),
 				eval_mode=True,
-				task=torch.tensor(task_idx, device=self.device))
+				task=task_idx)
     
 	@torch.no_grad()
 	def _forward(self, x):
@@ -166,7 +166,7 @@ class TDMPC2(torch.nn.Module):
 		"""
 		obs = obs.to(self.device, non_blocking=True)
 		if task is not None:
-			#task = torch.tensor([task], device=self.device)
+			task = torch.tensor([task], device=self.device)
 			task = task.repeat(obs.shape[0]).to(self.device)
 		if self.cfg.mpc:
 			return self.plan(obs, t0=t0, eval_mode=eval_mode, task=task).cpu()
@@ -210,7 +210,10 @@ class TDMPC2(torch.nn.Module):
 		z = self.model.encode(obs, task)
 		if self.cfg.num_pi_trajs:
 			pi_actions = torch.empty(self.cfg.horizon, self._num_envs, self.cfg.num_pi_trajs, self.cfg.action_dim, device=self.device)
-			#_z = z.repeat(self.cfg.num_pi_trajs, 1)
+
+			task_pi = task.unsqueeze(1)
+			task_pi = task_pi.repeat(1, self.cfg.num_pi_trajs).flatten(0)
+
 			_z = z.unsqueeze(1).repeat(1, self.cfg.num_pi_trajs, 1).flatten(0, 1)
 			for t in range(self.cfg.horizon - 1):
 				a, _ = self.model.pi(_z, task)
@@ -223,16 +226,11 @@ class TDMPC2(torch.nn.Module):
 			pi_actions = None
 
 		# Initialize state and parameters
-		#z = z.repeat(self.cfg.num_samples, 1)
 		_z = z.unsqueeze(1).repeat(1, self.cfg.num_samples, 1).flatten(0, 1)
 		mean = torch.zeros(self._num_envs, self.cfg.horizon, self.cfg.action_dim, device=self.device)
-		#std = torch.full((self.cfg.horizon, self.cfg.action_dim), self.cfg.max_std, dtype=torch.float, device=self.device)
 		std = torch.full_like(mean, self.cfg.max_std)
 		
 		mean[~t0] = self._prev_mean[~t0]
-		#actions = torch.empty(self.cfg.horizon, self.cfg.num_samples, self.cfg.action_dim, device=self.device)
-		#if self.cfg.num_pi_trajs > 0:
-		#	actions[:, :self.cfg.num_pi_trajs] = pi_actions
 
 		# Iterate MPPI
 		for _ in range(self.cfg.iterations):
@@ -242,7 +240,6 @@ class TDMPC2(torch.nn.Module):
 				self._num_envs, self.cfg.horizon, self.cfg.num_samples - self.cfg.num_pi_trajs, self.cfg.action_dim, device=std.device
 			)
 			actions_sample = (mean.unsqueeze(2) + std.unsqueeze(2) * r).clamp(-1, 1)
-			#actions[:, self.cfg.num_pi_trajs:] = actions_sample
 			actions = torch.cat((pi_actions, actions_sample), 2) if pi_actions is not None else actions_sample
 			if self.cfg.multitask:
 				actions = actions * self.model._action_masks[task]
@@ -255,11 +252,12 @@ class TDMPC2(torch.nn.Module):
 			)
 			task_rep = None
 			if task is not None:
-			    task_rep = task.unsqueeze(1).repeat(1, self.cfg.num_samples).view(-1)
-			value = self._estimate_value(_z, actions_flat, task).view(self._num_envs, self.cfg.num_samples, 1)
-			#elite_idxs = torch.topk(value.squeeze(1), self.cfg.num_elites, dim=0).indices
+			    task_rep = task.unsqueeze(1)
+			    task_rep = task_rep.repeat(1, self.cfg.num_samples)
+			    task_rep = task_rep.flatten(0)
+
+			value = self._estimate_value(_z, actions_flat, task_rep).view(self._num_envs, self.cfg.num_samples, 1)
 			elite_idx = value.squeeze(-1).topk(self.cfg.num_elites, 1).indices
-			#elite_value, elite_actions = value[elite_idxs], actions[:, elite_idxs]
 			actions_perm = actions.permute(0,2,1,3).contiguous()
 			elite_actions = torch.gather(
 				actions_perm,
@@ -272,9 +270,7 @@ class TDMPC2(torch.nn.Module):
 			max_value = elite_value.max(1, keepdim=True).values
 			score = torch.exp(self.cfg.temperature * (elite_value - max_value))
 			score = score / (score.sum(1, keepdim=True) + 1e-9)
-			#mean = (score.unsqueeze(0) * elite_actions).sum(dim=1) / (score.sum(0) + 1e-9)
 			mean = (score[..., None] * elite_actions).sum(1)
-			#std = ((score.unsqueeze(0) * (elite_actions - mean.unsqueeze(1)) ** 2).sum(dim=1) / (score.sum(0) + 1e-9)).sqrt()
 			std = ((score[..., None] * (elite_actions - mean[:, None])**2).sum(1) / (score.sum(1, keepdim=True) + 1e-9)).sqrt()
 			std = std.clamp(self.cfg.min_std, self.cfg.max_std)
 			if self.cfg.multitask:
@@ -283,11 +279,8 @@ class TDMPC2(torch.nn.Module):
 
 		# Select action
 		rand_idx = math.gumbel_softmax_sample(score.squeeze(-1))
-		#actions = torch.index_select(elite_actions, 1, rand_idx).squeeze(1)
 		first_a = elite_actions[torch.arange(self._num_envs), rand_idx, 0]
-		#a, std = actions[0], std[0]
 		if not eval_mode:
-			#a = a + std * torch.randn(self.cfg.action_dim, device=std.device)
 			first_a = first_a + std[:, 0] * torch.randn_like(first_a)
 		
 		self._prev_mean.copy_(mean)
