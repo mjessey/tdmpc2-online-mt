@@ -46,7 +46,7 @@ class SAIWrapper(gym.Wrapper):
         return self.env.render(**kwargs)
 
     def action_function(self, action):
-        action = action.clamp(-1, 1)
+        action = np.clip(action, -1, 1)
 
         mi = self.env.action_space.low
         ma = self.env.action_space.high
@@ -63,9 +63,9 @@ def make_env(cfg):
     if cfg.task not in SAI_TASKS:
         raise ValueError("Unknown task:", cfg.task)
 
-    sai = SAIClient(comp_id="lower-t1-penalty-kick-goalie")
+    sai = SAIClient(comp_id="booster-soccer-showdown")
 
-    env = sai.make_env(SAI_TASKS[cfg.task], render_mode="rgb_array")
+    env = sai.make_env(SAI_TASKS[cfg.task], use_custom_eval=False, render_mode="rgb_array")
 
     env = SAIWrapper(env, cfg)
 

@@ -1,6 +1,8 @@
 import torch
 import torch.nn.functional as F
 
+import numpy as np
+
 from common import math
 from common.scale import RunningScale
 from common.world_model import WorldModel
@@ -94,6 +96,20 @@ class TDMPC2(torch.nn.Module):
 		state_dict = api_model_conversion(self.model.state_dict(), state_dict)
 		self.model.load_state_dict(state_dict)
 		return
+
+	@torch.no_grad()
+	def forward(self, x):
+		if x[0, -3]:
+			task_idx = 0
+		elif x[0, -2]:
+			task_idx = 1
+		else:
+			task_idx = 2
+
+		x = x[:, :-3]
+		x = np.hstack((x, np.zeros((100, 54 - x.shape[1]))))
+		x = torch.tensor(x, dtype=torch.float32)
+		return self.act(x, t0=True, eval_mode=True, task=task_idx)
 
 	@torch.no_grad()
 	def act(self, obs, t0=False, eval_mode=False, task=None):

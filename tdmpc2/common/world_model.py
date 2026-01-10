@@ -133,7 +133,7 @@ class WorldModel(nn.Module):
 		"""
 		Predicts termination signal.
 		"""
-		assert task is None
+		#assert task is None
 		if self.cfg.multitask:
 			z = self.task_emb(z, task)
 		if unnormalized:
